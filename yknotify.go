@@ -8,6 +8,7 @@ import (
 	"log"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,6 +27,7 @@ type LogEntry struct {
 }
 
 type TouchState struct {
+	mu            sync.Mutex
 	fido2Needed   bool
 	openPGPNeeded bool
 	lastNotify    time.Time
@@ -37,6 +39,13 @@ type TouchEvent struct {
 }
 
 func (ts *TouchState) checkAndNotify() {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
+	if !ts.fido2Needed && !ts.openPGPNeeded {
+		return
+	}
+
 	now := time.Now()
 	if now.Sub(ts.lastNotify) < time.Second {
 		return
@@ -114,19 +123,24 @@ func streamLogs() error {
 			// Only trigger FIDO2 for tracked YubiKey clients.
 			if strings.HasSuffix(msg, "startQueue") {
 				clientID := strings.Split(msg, " ")[0]
+				state.mu.Lock()
 				state.fido2Needed = yubiKeyClients[clientID]
+				state.mu.Unlock()
 			} else if strings.HasSuffix(msg, "stopQueue") {
 				clientID := strings.Split(msg, " ")[0]
 				if yubiKeyClients[clientID] {
+					state.mu.Lock()
 					state.fido2Needed = false
+					state.mu.Unlock()
 				}
 			}
 
 		case strings.HasSuffix(entry.ProcessImagePath, "usbsmartcardreaderd") &&
 			strings.HasSuffix(entry.Subsystem, "CryptoTokenKit"):
+			state.mu.Lock()
 			state.openPGPNeeded = entry.EventMessage == "Time extension received"
+			state.mu.Unlock()
 		}
-		state.checkAndNotify()
 	}
 
 	return scanner.Err()

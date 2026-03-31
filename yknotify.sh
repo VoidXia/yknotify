@@ -3,7 +3,7 @@
 # List of sounds: https://apple.stackexchange.com/a/479714
 
 # Adjust as needed
-YKNTFY_BIN="/Users/<USER>/go/bin/yknotify"
+YKNTFY_BIN="$HOME/go/bin/yknotify"
 
 # brew install terminal-notifier
 TERM_NTFY_BIN="/opt/homebrew/bin/terminal-notifier"
