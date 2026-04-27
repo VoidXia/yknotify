@@ -132,17 +132,41 @@ class YKNotify: NSObject, ObservableObject {
 
     // MARK: - SSH refresh
 
+    private static let sshLogURL: URL = {
+        let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Logs")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("yknotify-ssh.log")
+    }()
+
+    // Apple's /usr/bin/ssh isn't linked against libfido2 and silently ignores sk-keys
+    // ("no SecurityKeyProvider has been specified"). Prefer Homebrew's openssh, which
+    // has the internal FIDO2 provider built in.
+    private static let sshExecutableURL: URL = {
+        for path in ["/opt/homebrew/bin/ssh", "/usr/local/bin/ssh"] {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return URL(fileURLWithPath: path)
+            }
+        }
+        return URL(fileURLWithPath: "/usr/bin/ssh")
+    }()
+
     private func triggerSSHRefresh() {
         guard !isSSHRunning else { return }
         isSSHRunning = true
         flashStatusItem()
 
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        proc.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "git@github.com"]
+        proc.executableURL = Self.sshExecutableURL
+        proc.arguments = [
+            "-o", "ConnectTimeout=5",
+            "-o", "ControlMaster=no",
+            "-o", "ControlPath=none",
+            "git@github.com"
+        ]
         proc.standardInput = FileHandle.nullDevice
         proc.standardOutput = FileHandle.nullDevice
-        proc.standardError = FileHandle.nullDevice
+        proc.standardError = sshLogHandle()
         proc.terminationHandler = { [weak self] _ in
             DispatchQueue.main.async { self?.isSSHRunning = false }
         }
@@ -152,6 +176,21 @@ class YKNotify: NSObject, ObservableObject {
         } catch {
             isSSHRunning = false
         }
+    }
+
+    private func sshLogHandle() -> Any {
+        let url = Self.sshLogURL
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: url) else {
+            return FileHandle.nullDevice
+        }
+        handle.seekToEndOfFile()
+        if let header = "\n=== \(Date()) ===\n".data(using: .utf8) {
+            handle.write(header)
+        }
+        return handle
     }
 
     private func flashStatusItem() {
